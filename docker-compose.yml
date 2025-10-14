@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  service-discovery:
+    build: .
+    container_name: service-discovery
+    ports:
+      - "8500:8500"
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - mbackend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8500/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  microservices-network:
+    driver: bridge
