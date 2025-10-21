@@ -116,3 +116,8 @@ Logs include:
 1. Create a feature branch
 2. Make your changes
 3. Submit a pull request
+
+## License
+
+MIT License
+
