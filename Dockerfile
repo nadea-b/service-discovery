@@ -1,18 +1,23 @@
+# 🐍 Base image
 FROM python:3.11-slim
 
+# 🗂️ Set working directory
 WORKDIR /app
 
-# Copy requirements first for better caching
+# ⚡ Copy dependency list first (improves build caching)
 COPY requirements.txt .
 
-# Install dependencies
+# 🧩 Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY serviceDiscovery.py .
+# 📦 Copy all source files (both serviceDiscovery.py and notificationService.py)
+COPY . .
 
-# Expose the port
+# 🧱 Expose default Service Discovery port
 EXPOSE 8500
 
-# Run the application
+# 🧱 Expose Notification Service port (optional)
+EXPOSE 8600
+
+
 CMD ["python", "serviceDiscovery.py"]
