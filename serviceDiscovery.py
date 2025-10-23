@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 import asyncio
 import httpx
 from io import StringIO
+import os
 
 # Configure logging to both console and memory
 logging.basicConfig(
@@ -33,6 +34,9 @@ health_check_task = None
 HEALTH_CHECK_INTERVAL = 30  # seconds
 HEALTH_CHECK_TIMEOUT = 5    # seconds
 CRITICAL_LOAD_THRESHOLD = 80  # percentage
+
+# Notification service configuration
+NOTIFICATION_URL = os.getenv("NOTIFICATION_URL", "http://notifications:8600/notify")
 
 # Pydantic models
 class ServiceRegistration(BaseModel):
@@ -143,11 +147,41 @@ async def periodic_health_check():
                 if health_result["status"] == "unhealthy":
                     logger.error(f"ALERT: Service {service_info['service_name']} (ID: {service_id}) is UNHEALTHY! Error: {health_result.get('error', 'Unknown')}")
                     service_registry[service_id]["status"] = "unhealthy"
+
+                    # Send alert to Notifications service
+                    alert = {
+                        "service": service_info["service_name"],
+                        "status": "unhealthy",
+                        "message": health_result.get("error", "Unknown error"),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    try:
+                        async with httpx.AsyncClient() as client:
+                            response = await client.post(NOTIFICATION_URL, json=alert)
+                            if response.status_code == 200:
+                                logger.info(f"Notification sent for {service_info['service_name']}")
+                            else:
+                                logger.warning(f"Notification failed for {service_info['service_name']}: {response.status_code}")
+                    except Exception as notify_err:
+                        logger.error(f"Failed to send notification: {notify_err}")
                 
                 # Check for critical load (slow response times)
                 response_time = health_result.get("response_time_ms", 0)
                 if response_time > 1000:  # > 1 second
                     logger.warning(f"LOAD WARNING: Service {service_info['service_name']} response time: {response_time:.2f}ms")
+
+                    # NEW: Optional — send high-load warning
+                    alert = {
+                        "service": service_info["service_name"],
+                        "status": "high_load",
+                        "message": f"Response time {response_time:.2f}ms exceeds threshold.",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    try:
+                        async with httpx.AsyncClient() as client:
+                            await client.post(NOTIFICATION_URL, json=alert)
+                    except Exception as notify_err:
+                        logger.error(f"Failed to send load alert: {notify_err}")
                 
                 # Log healthy status at debug level
                 elif health_result["status"] == "healthy":
@@ -393,7 +427,7 @@ async def health_check():
         "healthy_services": healthy_count
     }
 
-# NEW: Service health status endpoint
+# Service health status endpoint
 @app.get("/services/{service_name}/health", response_model=List[ServiceHealth])
 async def get_service_health(service_name: str):
     """Get health status of all instances of a service"""
@@ -430,7 +464,7 @@ async def get_service_health(service_name: str):
             detail=f"Failed to get health status: {str(e)}"
         )
 
-# NEW: Check specific service health now
+# Check specific service health now
 @app.post("/services/{service_id}/check-health")
 async def check_health_now(service_id: str):
     """Manually trigger health check for a specific service"""
@@ -470,7 +504,7 @@ async def check_health_now(service_id: str):
             detail=f"Failed to check health: {str(e)}"
         )
 
-# NEW: Download logs endpoint
+# Download logs endpoint
 @app.get("/logs", response_class=PlainTextResponse)
 async def download_logs():
     """Download system logs"""
@@ -497,7 +531,7 @@ async def download_logs():
             detail=f"Failed to download logs: {str(e)}"
         )
 
-# NEW: Get recent logs (last N lines)
+# Get recent logs (last N lines)
 @app.get("/logs/recent")
 async def get_recent_logs(lines: int = 100):
     """Get recent log lines"""
@@ -541,6 +575,57 @@ async def get_system_stats():
         "health_check_interval_seconds": HEALTH_CHECK_INTERVAL,
         "timestamp": datetime.now().isoformat()
     }
+
+# Receive circuit breaker events from services
+@app.post("/circuit-breaker/event")
+async def receive_circuit_breaker_event(event: dict):
+    service_id = event["service_id"]
+    state = event["state"]  # "OPEN" or "CLOSED"
+    
+    if service_id in service_registry:
+        service_registry[service_id]["circuit_breaker_state"] = state
+        if state == "OPEN":
+            service_registry[service_id]["status"] = "circuit_open"
+            logger.error(f"Circuit OPEN for {service_id}")
+        else:
+            service_registry[service_id]["status"] = "healthy"
+            logger.info(f"Circuit CLOSED for {service_id}")
+    
+    return {"message": "Event received"}
+
+# Get only healthy services
+@app.get("/services/{service_name}/available")
+async def get_available_services(service_name: str):
+    available = []
+    for service_id, info in service_registry.items():
+        if (info["service_name"] == service_name and 
+            info["health_status"] == "healthy" and
+            info.get("circuit_breaker_state", "CLOSED") != "OPEN"):
+            available.append(ServiceInfo(**info))
+    return available
+
+# Select best service by load
+@app.get("/services/{service_name}/select")
+async def select_best_service(service_name: str):
+    available = []
+    for service_id, info in service_registry.items():
+        if (info["service_name"] == service_name and 
+            info["health_status"] == "healthy" and
+            info.get("circuit_breaker_state", "CLOSED") != "OPEN"):
+            load = int(info.get("metadata", {}).get("load", 50))
+            available.append({
+                "service_id": service_id,
+                "host": info["host"],
+                "port": info["port"],
+                "load": load
+            })
+    
+    if not available:
+        raise HTTPException(503, "No available instances")
+    
+    # Return lowest load
+    available.sort(key=lambda x: x["load"])
+    return available[0]
 
 if __name__ == "__main__":
     logger.info("Starting Service Discovery on port 8500")
