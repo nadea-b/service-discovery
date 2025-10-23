@@ -1,8 +1,11 @@
-version: '3.8'
+version: "3.9"
 
 services:
+  # 🧭 Service Discovery
   service_discovery:
-    image: nadea39/service-discovery:v1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: service_discovery_container
     command: ["python", "serviceDiscovery.py"]
     ports:
@@ -37,6 +40,78 @@ services:
     networks:
       - microservices-network
 
+  # 📢 Notification Service
+  notifications:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: notifications_container
+    command: ["python", "notificationService.py"]
+    depends_on:
+      service_discovery:
+        condition: service_healthy
+    ports:
+      - "8600:8600"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - SERVICE_DISCOVERY_URL=http://service_discovery:8500
+    networks:
+      - microservices-network
+
+  # 🏙️ Town Service (Node.js)
+  town:
+    image: livia994/townservice:latest
+    container_name: town_container
+    depends_on:
+      service_discovery:
+        condition: service_healthy
+      mongo:
+        condition: service_started
+    environment:
+      - SERVICE_DISCOVERY_URL=http://service_discovery:8500
+      - MONGO_URI=mongodb://mongo:27017/townDB
+      - PORT=4001
+    ports:
+      - "4001:4001"
+    networks:
+      - microservices-network
+
+  # 👥 Characters Service (Node.js)
+  characters:
+    image: livia994/characterservice:latest
+    container_name: characters_container
+    depends_on:
+      service_discovery:
+        condition: service_healthy
+      mongo:
+        condition: service_started
+    environment:
+      - SERVICE_DISCOVERY_URL=http://service_discovery:8500
+      - MONGO_URI=mongodb://mongo:27017/characterDB
+      - PORT=4002
+    ports:
+      - "4002:4002"
+    networks:
+      - microservices-network
+
+  # 🧱 MongoDB
+  mongo:
+    image: mongo:6
+    container_name: mongo_container
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - microservices-network
+
+# Shared Docker network
 networks:
   microservices-network:
     driver: bridge
+
+# Persistent storage for MongoDB
+volumes:
+  mongo_data:
