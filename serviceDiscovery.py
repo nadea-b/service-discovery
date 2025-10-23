@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 import asyncio
 import httpx
 from io import StringIO
+import os  # ✅ NEW: to read environment variables
 
 # Configure logging to both console and memory
 logging.basicConfig(
@@ -33,6 +34,9 @@ health_check_task = None
 HEALTH_CHECK_INTERVAL = 30  # seconds
 HEALTH_CHECK_TIMEOUT = 5    # seconds
 CRITICAL_LOAD_THRESHOLD = 80  # percentage
+
+# ✅ NEW: Notification service configuration
+NOTIFICATION_URL = os.getenv("NOTIFICATION_URL", "http://notifications:8600/notify")
 
 # Pydantic models
 class ServiceRegistration(BaseModel):
@@ -143,11 +147,41 @@ async def periodic_health_check():
                 if health_result["status"] == "unhealthy":
                     logger.error(f"ALERT: Service {service_info['service_name']} (ID: {service_id}) is UNHEALTHY! Error: {health_result.get('error', 'Unknown')}")
                     service_registry[service_id]["status"] = "unhealthy"
+
+                    # ✅ NEW: Send alert to Notifications service
+                    alert = {
+                        "service": service_info["service_name"],
+                        "status": "unhealthy",
+                        "message": health_result.get("error", "Unknown error"),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    try:
+                        async with httpx.AsyncClient() as client:
+                            response = await client.post(NOTIFICATION_URL, json=alert)
+                            if response.status_code == 200:
+                                logger.info(f"Notification sent for {service_info['service_name']}")
+                            else:
+                                logger.warning(f"Notification failed for {service_info['service_name']}: {response.status_code}")
+                    except Exception as notify_err:
+                        logger.error(f"Failed to send notification: {notify_err}")
                 
                 # Check for critical load (slow response times)
                 response_time = health_result.get("response_time_ms", 0)
                 if response_time > 1000:  # > 1 second
                     logger.warning(f"LOAD WARNING: Service {service_info['service_name']} response time: {response_time:.2f}ms")
+
+                    # ✅ NEW: Optional — send high-load warning
+                    alert = {
+                        "service": service_info["service_name"],
+                        "status": "high_load",
+                        "message": f"Response time {response_time:.2f}ms exceeds threshold.",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    try:
+                        async with httpx.AsyncClient() as client:
+                            await client.post(NOTIFICATION_URL, json=alert)
+                    except Exception as notify_err:
+                        logger.error(f"Failed to send load alert: {notify_err}")
                 
                 # Log healthy status at debug level
                 elif health_result["status"] == "healthy":
