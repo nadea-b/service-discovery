@@ -20,6 +20,25 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+  
+  notifications:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: notifications_container
+    command: ["python", "notificationService.py"]
+    depends_on:
+      service_discovery:
+        condition: service_healthy
+    ports:
+      - "8600:8600"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - SERVICE_DISCOVERY_URL=http://service_discovery:8500
+    networks:
+      - microservices-network
 
   # 📢 Notification Service
   notifications:

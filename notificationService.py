@@ -50,7 +50,7 @@ async def notify(alert: Alert):
                     "parse_mode": "Markdown"
                 }
             )
-        logger.info("📩 Telegram notification sent successfully")
+        logger.info("Telegram notification sent successfully")
         return {"message": "Telegram notification sent"}
     except Exception as e:
         logger.error(f"Failed to send Telegram message: {e}")
@@ -87,7 +87,7 @@ async def register_service(retries=5, delay=5):
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info("🚀 Notifications Service starting up...")
+    logger.info("Notifications Service starting up...")
     asyncio.create_task(register_service())
 
 @app.get("/health")
